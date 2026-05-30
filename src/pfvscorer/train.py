@@ -30,8 +30,6 @@ def parse_args():
     ap.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu')
     ap.add_argument('--h11_filter', type=int, nargs='*', default=None,
                     help='restrict to specific h11 values (default: all)')
-    ap.add_argument('--load_ckpt', default=None,
-                    help='path to checkpoint; if given, skip training and eval only')
     ap.add_argument('--ckpt_out', default='checkpoint.pt')
     ap.add_argument('--augment', action='store_true',
                     help='enable GLSM-basis (unimodular) augmentation for training')
@@ -86,7 +84,7 @@ def metrics(preds, targets):
 
 def polytope_split(df, val_frac, test_frac, seed):
     pairs = df[['h11', 'polyID']].drop_duplicates().to_records(index=False).tolist()
-    pairs = [(int(h), int(p)) for (h, p) in pairs]
+    pairs = sorted((int(h), int(p)) for (h, p) in pairs)  # sort first so the split is independent of row order
     rng = np.random.default_rng(seed)
     rng.shuffle(pairs)
     n_val  = int(val_frac  * len(pairs))
@@ -108,16 +106,8 @@ def main():
     np.random.seed(args.seed)
 
     ds_full = ConiDataset(args.parquet, h11_filter=args.h11_filter)
-
-    if args.load_ckpt:
-        ckpt = torch.load(args.load_ckpt, map_location='cpu', weights_only=False)
-        train_idx = list(ckpt['train_idx'])
-        val_idx   = list(ckpt['val_idx'])
-        test_idx  = list(ckpt['test_idx'])
-        print(f"loaded splits from {args.load_ckpt}")
-    else:
-        train_idx, val_idx, test_idx = polytope_split(
-            ds_full.df, args.val_frac, args.test_frac, args.seed)
+    train_idx, val_idx, test_idx = polytope_split(
+        ds_full.df, args.val_frac, args.test_frac, args.seed)
 
     if args.augment:
         ds_train_src = ConiDataset(
@@ -140,45 +130,33 @@ def main():
     model = PFVCountModel(max_h11=args.max_h11).to(device)
     print(f"model params: {sum(p.numel() for p in model.parameters()):,}")
 
-    if args.load_ckpt:
-        model.load_state_dict(ckpt['model_state'])
-        print(f"loaded model weights from {args.load_ckpt}")
-
     poisson_nll = nn.PoissonNLLLoss(log_input=True)
-
-    if not args.load_ckpt:
-        opt   = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
-        t0 = time.time()
-        for ep in range(1, args.epochs + 1):
-            model.train()
-            running, n_seen = 0.0, 0
-            for batch in dl_train:
-                batch = to_device(batch, device)
-                y = batch['num_pfvs'].float()
-                log_lambda = model(batch)
-                loss = poisson_nll(log_lambda, y)
-                opt.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                opt.step()
-                running += loss.item() * y.shape[0]
-                n_seen  += y.shape[0]
-            sched.step()
-            train_loss = running / n_seen
-            val_preds, val_targets, _ = predict(model, dl_val, device)
-            m = metrics(val_preds, val_targets)
-            print(f"  ep {ep:3d}  train_loss={train_loss:7.3f}  "
-                  f"val_rel_med={m['rel_med']:.3f}  val_AUC>1000={m['auc_1000']:.3f}  "
-                  f"lr={sched.get_last_lr()[0]:.2e}  t={time.time()-t0:6.1f}s")
-        torch.save({
-            'model_state': model.state_dict(),
-            'train_idx':   train_idx,
-            'val_idx':     val_idx,
-            'test_idx':    test_idx,
-            'args':        vars(args),
-        }, args.ckpt_out)
-        print(f"saved checkpoint -> {args.ckpt_out}")
+    opt   = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
+    t0 = time.time()
+    for ep in range(1, args.epochs + 1):
+        model.train()
+        running, n_seen = 0.0, 0
+        for batch in dl_train:
+            batch = to_device(batch, device)
+            y = batch['num_pfvs'].float()
+            log_lambda = model(batch)
+            loss = poisson_nll(log_lambda, y)
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            running += loss.item() * y.shape[0]
+            n_seen  += y.shape[0]
+        sched.step()
+        train_loss = running / n_seen
+        val_preds, val_targets, _ = predict(model, dl_val, device)
+        m = metrics(val_preds, val_targets)
+        print(f"  ep {ep:3d}  train_loss={train_loss:7.3f}  "
+              f"val_rel_med={m['rel_med']:.3f}  val_AUC>1000={m['auc_1000']:.3f}  "
+              f"lr={sched.get_last_lr()[0]:.2e}  t={time.time()-t0:6.1f}s")
+    torch.save({'model_state': model.state_dict(), 'args': vars(args)}, args.ckpt_out)
+    print(f"saved checkpoint -> {args.ckpt_out}")
 
     # final detailed eval on val and test
     print()

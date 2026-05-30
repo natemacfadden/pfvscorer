@@ -33,7 +33,7 @@ class PFVCountModel(nn.Module):
             nn.Dropout(dropout),
         )
 
-        self.count_head  = nn.Linear(d_head, 1)
+        self.head = nn.Linear(d_head, 1)
 
     def forward(self, batch: dict) -> torch.Tensor:
         k = self.kappa(batch['kappa_idx'], batch['kappa_v'], batch['kappa_mask'])
@@ -41,4 +41,4 @@ class PFVCountModel(nn.Module):
         h = self.H    (batch['H'],          batch['H_row_mask'], batch['H_col_mask'])
         e = self.h11_emb(batch['h11'])
         z = self.trunk(torch.cat([k, c, h, e], dim=-1))
-        return self.count_head(z).squeeze(-1)   # log_lambda  (B,)
+        return self.head(z).squeeze(-1)   # log_lambda  (B,)
