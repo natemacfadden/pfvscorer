@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Jupyter
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+
+# Data and model artifacts (regenerated from the .dat tree / by training)
+*.parquet
+*.dat
+*.pt
