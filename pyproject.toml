@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfvscorer"
+version = "0.1.0"
+description = "A prediction network for how richness of certain classes of Diophantine problems"
+authors = [{ name = "Nate MacFadden" }]
+readme = "README.md"
+license = "GPL-3.0-or-later"
+keywords = ["calabi-yau", "conifold", "PFV", "set transformer", "deep sets"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy",
+    "torch",
+    "pyarrow",
+    "pandas",
+]
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+test = ["pytest"]
+experiments = ["scikit-learn"]
+
+[project.scripts]
+pfvscorer-train = "pfvscorer.train:main"
+
+[project.urls]
+Repository = "https://github.com/natemacfadden/pfvscorer"
+Issues = "https://github.com/natemacfadden/pfvscorer/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
