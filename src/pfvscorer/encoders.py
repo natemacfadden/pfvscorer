@@ -1,15 +1,26 @@
-"""Per-modality encoders for the PFV-count model.
-
-KappaEncoder: Deep Sets over symmetric-COO tokens (i, j, k, v).
-  - Shared index embedding E[max_h11, d_idx]
-  - Symmetric index aggregation: E[i] + E[j] + E[k] (permutation-invariant
-    in the index triple, matching kappa's symmetry)
-  - Value handling: log-sign transform then a 1->d_val Linear
-  - Per-token MLP phi, then masked sum-pool over tokens, then MLP rho
-"""
+# =============================================================================
+#    Copyright (C) 2026  Nate MacFadden for the Liam McAllister Group
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# =============================================================================
+#
+# -----------------------------------------------------------------------------
+# Description:  Per-modality geometry encoders (kappa / c2 / H) for the PFV
+#               presence classifier.
+# -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import math
 import torch
 import torch.nn as nn
 
@@ -20,7 +31,13 @@ def signed_log1p(x: torch.Tensor) -> torch.Tensor:
 
 
 class SetTransformerPool(nn.Module):
-    """Set Transformer: N SAB blocks then PMA pooling with k learned seeds.
+    """Permutation-invariant set pooling (Set Transformer, Lee et al. 2019).
+
+    n_sab transformer encoder layers without positional encodings (so they are
+    permutation-equivariant: every element attends to every other), then
+    attention pooling -- n_seeds learned queries cross-attend over the set
+    to give n_seeds fixed summary vectors, invariant to set order and size.
+    Input (B, N, D) + padding mask -> output (B, n_seeds * D).
     """
     def __init__(self, d_model: int, n_heads: int = 4, n_sab: int = 2,
                  n_seeds: int = 1, ff_mult: int = 2, dropout: float = 0.0):
@@ -67,6 +84,16 @@ class SetTransformerPool(nn.Module):
 
 
 class KappaEncoder(nn.Module):
+    """Set Transformer over symmetric-COO kappa tokens (i, j, k, value).
+
+    Two nested symmetries. Within a token the three indices are unordered
+    (kappa is fully symmetric), so they share one embedding table and are
+    summed -- a Deep Sets aggregation over the triple that preserves index
+    multiplicity. That sum is concatenated with the signed-log1p value (via a
+    Linear), run through a per-token MLP, and the resulting unordered token set
+    is pooled by the Set Transformer above.
+    """
+
     def __init__(
         self,
         max_h11: int,
@@ -131,9 +158,9 @@ class C2Encoder(nn.Module):
     """c2 is a length-h11 integer vector. Position matters (each entry is
     the second Chern class component for a specific basis divisor).
 
-    Tokenization: each position j becomes a token  E_pos[j] + Linear(sgn_log1p(c2[j])).
-    Aggregator: a small transformer encoder over the tokens, then mean-pool
-    over valid positions.
+    Tokenization: each position j becomes a token
+    E_pos[j] + Linear(signed_log1p(c2[j])). Aggregator: a small transformer
+    encoder over the tokens, then mean-pool over valid positions.
     """
     def __init__(
         self,
@@ -160,7 +187,7 @@ class C2Encoder(nn.Module):
     def forward(self, c2: torch.Tensor, c2_mask: torch.Tensor) -> torch.Tensor:
         """
         c2:      (B, H) long
-        c2_mask: (B, H) bool, True for valid positions (h11 may differ per sample)
+        c2_mask: (B, H) bool, True at valid positions (h11 may differ)
         returns: (B, d_out)
         """
         B, H = c2.shape
@@ -186,7 +213,7 @@ class HEncoder(nn.Module):
 
     Per-row encoding: column-position embedding E_col[j] modulated by the
     signed-log1p value, summed over columns (handles variable h11-1).
-    Set aggregator across rows: Deep Sets (sum-pool, mean-rescaled).
+    Set aggregator across rows: Deep Sets (sum-pool, 1/sqrt(count) rescaled).
     """
     def __init__(
         self,

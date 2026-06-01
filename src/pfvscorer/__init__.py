@@ -1,10 +1,9 @@
-# pfvscorer/__init__.py
-from .model import PFVCountModel
+from .model import PFVRichnessModel
 from .dataset import ConiDataset, collate
 from .encoders import KappaEncoder, C2Encoder, HEncoder
 
 __all__ = [
-    "PFVCountModel",
+    "PFVRichnessModel",
     "ConiDataset",
     "collate",
     "KappaEncoder",

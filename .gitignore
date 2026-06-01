@@ -21,3 +21,6 @@ dist/
 *.parquet
 *.dat
 *.pt
+
+# Archived source/intermediate files kept only for records
+data/archive/

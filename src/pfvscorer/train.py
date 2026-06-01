@@ -1,7 +1,26 @@
-"""Train the PFV count model (Poisson NLL on log_lambda).
-
-Polytope-level train/val/test split. Reports median rel err and AUC at >100, >1000.
-"""
+# =============================================================================
+#    Copyright (C) 2026  Nate MacFadden for the Liam McAllister Group
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# =============================================================================
+#
+# -----------------------------------------------------------------------------
+# Description:  Train the PFV presence classifier (multi-threshold BCE).
+#               Each example conditions on a sampled (B', dil') window; each
+#               head predicts P(#PFVs in window > its threshold). Reports
+#               per-head AUC on val/test.
+# -----------------------------------------------------------------------------
 from __future__ import annotations
 
 import argparse
@@ -13,17 +32,20 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
 
 from .dataset import DEFAULT_PARQUET, ConiDataset, collate
-from .model import PFVCountModel
+from .model import PFVRichnessModel
 
 
 def parse_args():
+    """Parse command-line training arguments."""
     ap = argparse.ArgumentParser()
     ap.add_argument('--parquet', default=DEFAULT_PARQUET)
     ap.add_argument('--batch', type=int, default=64)
     ap.add_argument('--epochs', type=int, default=50)
     ap.add_argument('--lr', type=float, default=3e-4)
     ap.add_argument('--wd', type=float, default=1e-4)
-    ap.add_argument('--max_h11', type=int, default=10)
+    ap.add_argument('--max_h11', type=int, default=11)
+    ap.add_argument('--bce_thresh', type=float, nargs='+', default=[0.0, 50.0],
+                    help='presence head(s): one per count threshold (default >0 and >50)')
     ap.add_argument('--val_frac', type=float, default=0.15)
     ap.add_argument('--test_frac', type=float, default=0.15)
     ap.add_argument('--seed', type=int, default=0)
@@ -32,94 +54,98 @@ def parse_args():
                     help='restrict to specific h11 values (default: all)')
     ap.add_argument('--ckpt_out', default='checkpoint.pt')
     ap.add_argument('--augment', action='store_true',
-                    help='enable GLSM-basis (unimodular) augmentation for training')
-    ap.add_argument('--aug_n_ops', type=int, default=4)
-    ap.add_argument('--aug_k_range', type=int, default=2)
+                    help='enable signed-permutation GLSM-basis augmentation for training')
     ap.add_argument('--num_workers', type=int, default=0)
     return ap.parse_args()
 
 
-def to_device(batch, device):
+def to_device(batch: dict, device) -> dict:
+    """Move every tensor in a batch dict to ``device``."""
     return {k: v.to(device) for k, v in batch.items()}
 
 
+def bce_loss(logits: torch.Tensor, y: torch.Tensor, thresholds) -> torch.Tensor:
+    """Mean BCE over presence heads; head j's label is (y > thresholds[j])."""
+    tgt = torch.stack([(y > t).float() for t in thresholds], dim=-1)  # (N, H)
+    lg = logits if logits.dim() == 2 else logits.unsqueeze(-1)
+    return nn.functional.binary_cross_entropy_with_logits(lg, tgt)
+
+
 def predict(model, loader, device):
-    """One forward pass. Returns (preds, targets, h11s) as np arrays."""
+    """Run the model over a loader.
+
+    Returns
+    -------
+    tuple of np.ndarray
+        (probs, counts): per-head probabilities of shape (N, H) and the
+        conditioned counts of shape (N,).
+    """
     model.eval()
-    preds, targets, h11s = [], [], []
+    P, C = [], []
     with torch.no_grad():
         for batch in loader:
             batch = to_device(batch, device)
-            log_lambda = model(batch)
-            preds.append(torch.exp(log_lambda).cpu().numpy())
-            targets.append(batch['num_pfvs'].cpu().numpy())
-            h11s.append(batch['h11'].cpu().numpy())
-    return np.concatenate(preds), np.concatenate(targets), np.concatenate(h11s)
+            p = model.probs(batch)
+            if p.dim() == 1:
+                p = p.unsqueeze(-1)
+            P.append(p.cpu().numpy()); C.append(batch['count'].cpu().numpy())
+    return np.concatenate(P), np.concatenate(C)
 
 
-def auc(scores, y_true):
-    """Mann-Whitney U: P(score_pos > score_neg) for a random (pos, neg) pair."""
+def auc(scores: np.ndarray, y_true: np.ndarray) -> float:
+    """ROC-AUC = P(a random positive scores above a random negative).
+
+    Returns nan if either class is empty.
+    """
     n_pos = int(y_true.sum())
     n_neg = len(y_true) - n_pos
     if n_pos == 0 or n_neg == 0:
         return float('nan')
+    # rank-sum (Mann-Whitney U) identity for AUC; threshold-free
     order = np.argsort(scores)
     ranks = np.empty_like(order, dtype=float)
     ranks[order] = np.arange(1, len(scores) + 1)
     return (ranks[y_true].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg)
 
 
-def metrics(preds, targets):
-    abs_errs = np.abs(preds - targets)
-    nz = targets > 0
-    rel = abs_errs[nz] / targets[nz]
-    return {
-        'med_abs':  float(np.median(abs_errs)),
-        'rel_med':  float(np.median(rel)) if nz.any() else float('nan'),
-        'rel_mean': float(rel.mean())     if nz.any() else float('nan'),
-        'auc_100':  auc(preds, targets > 100),
-        'auc_1000': auc(preds, targets > 1000),
-    }
+def head_aucs(P: np.ndarray, C: np.ndarray, thresholds) -> list:
+    """AUC of each head's prob (P[:, j]) vs the label (C > thresholds[j])."""
+    return [auc(P[:, j], C > t) for j, t in enumerate(thresholds)]
 
 
-def polytope_split(df, val_frac, test_frac, seed):
-    pairs = df[['h11', 'polyID']].drop_duplicates().to_records(index=False).tolist()
-    pairs = sorted((int(h), int(p)) for (h, p) in pairs)  # sort first so the split is independent of row order
+def coni_split(n_rows: int, val_frac: float, test_frac: float, seed: int):
+    """Shuffled row split into (train, val, test) index lists.
+
+    Each row is one conifold, so a row split is a coni-level split with no
+    leakage (augmentation happens inside __getitem__).
+    """
     rng = np.random.default_rng(seed)
-    rng.shuffle(pairs)
-    n_val  = int(val_frac  * len(pairs))
-    n_test = int(test_frac * len(pairs))
-    val_set  = set(pairs[:n_val])
-    test_set = set(pairs[n_val:n_val + n_test])
-    keys = list(zip(df['h11'].astype(int), df['polyID'].astype(int)))
-    train_idx, val_idx, test_idx = [], [], []
-    for i, k in enumerate(keys):
-        if k in val_set:    val_idx.append(i)
-        elif k in test_set: test_idx.append(i)
-        else:               train_idx.append(i)
+    idx = np.arange(n_rows)
+    rng.shuffle(idx)
+    n_val  = int(val_frac  * n_rows)
+    n_test = int(test_frac * n_rows)
+    val_idx   = idx[:n_val].tolist()
+    test_idx  = idx[n_val:n_val + n_test].tolist()
+    train_idx = idx[n_val + n_test:].tolist()
     return train_idx, val_idx, test_idx
 
 
 def main():
+    """Train the classifier, report per-head AUC, and save the checkpoint."""
     args = parse_args()
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
-    ds_full = ConiDataset(args.parquet, h11_filter=args.h11_filter)
-    train_idx, val_idx, test_idx = polytope_split(
-        ds_full.df, args.val_frac, args.test_frac, args.seed)
+    ds_eval = ConiDataset(args.parquet, h11_filter=args.h11_filter, augment=False, train=False)
+    train_idx, val_idx, test_idx = coni_split(
+        len(ds_eval), args.val_frac, args.test_frac, args.seed)
 
-    if args.augment:
-        ds_train_src = ConiDataset(
-            args.parquet, h11_filter=args.h11_filter, augment=True,
-            aug_n_ops=args.aug_n_ops, aug_k_range=args.aug_k_range,
-        )
-    else:
-        ds_train_src = ds_full
+    ds_train_src = ConiDataset(args.parquet, h11_filter=args.h11_filter,
+                               augment=args.augment, train=True)
     ds_train = Subset(ds_train_src, train_idx)
-    ds_val   = Subset(ds_full,      val_idx)
-    ds_test  = Subset(ds_full,      test_idx)
-    print(f"split (polytope-level): train={len(ds_train)}, val={len(ds_val)}, test={len(ds_test)}")
+    ds_val   = Subset(ds_eval,      val_idx)
+    ds_test  = Subset(ds_eval,      test_idx)
+    print(f"split (coni-level): train={len(ds_train)}, val={len(ds_val)}, test={len(ds_test)}")
 
     dl_train = DataLoader(ds_train, batch_size=args.batch, shuffle=True,  collate_fn=collate,
                           num_workers=args.num_workers, persistent_workers=(args.num_workers > 0))
@@ -127,10 +153,10 @@ def main():
     dl_test  = DataLoader(ds_test,  batch_size=args.batch, shuffle=False, collate_fn=collate)
 
     device = torch.device(args.device)
-    model = PFVCountModel(max_h11=args.max_h11).to(device)
-    print(f"model params: {sum(p.numel() for p in model.parameters()):,}")
+    model = PFVRichnessModel(max_h11=args.max_h11, n_out=len(args.bce_thresh)).to(device)
+    print(f"model params: {sum(p.numel() for p in model.parameters()):,}  "
+          f"heads (count> ): {[int(t) for t in args.bce_thresh]}")
 
-    poisson_nll = nn.PoissonNLLLoss(log_input=True)
     opt   = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     t0 = time.time()
@@ -139,9 +165,8 @@ def main():
         running, n_seen = 0.0, 0
         for batch in dl_train:
             batch = to_device(batch, device)
-            y = batch['num_pfvs'].float()
-            log_lambda = model(batch)
-            loss = poisson_nll(log_lambda, y)
+            y = batch['count'].float()
+            loss = bce_loss(model(batch), y, args.bce_thresh)
             opt.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -149,28 +174,22 @@ def main():
             running += loss.item() * y.shape[0]
             n_seen  += y.shape[0]
         sched.step()
-        train_loss = running / n_seen
-        val_preds, val_targets, _ = predict(model, dl_val, device)
-        m = metrics(val_preds, val_targets)
-        print(f"  ep {ep:3d}  train_loss={train_loss:7.3f}  "
-              f"val_rel_med={m['rel_med']:.3f}  val_AUC>1000={m['auc_1000']:.3f}  "
+        Pv, Cv = predict(model, dl_val, device)
+        aucs = head_aucs(Pv, Cv, args.bce_thresh)
+        auc_str = "  ".join(f">{int(t)}:{a:.3f}" for t, a in zip(args.bce_thresh, aucs))
+        print(f"  ep {ep:3d}  train_bce={running/n_seen:6.3f}  val AUC {auc_str}  "
               f"lr={sched.get_last_lr()[0]:.2e}  t={time.time()-t0:6.1f}s")
-    torch.save({'model_state': model.state_dict(), 'args': vars(args)}, args.ckpt_out)
+    torch.save({'model_state': model.state_dict(), 'args': vars(args),
+                'train_idx': train_idx, 'val_idx': val_idx, 'test_idx': test_idx}, args.ckpt_out)
     print(f"saved checkpoint -> {args.ckpt_out}")
 
-    # final detailed eval on val and test
     print()
     for name, dl in [('val', dl_val), ('test', dl_test)]:
-        preds, targets, h11s = predict(model, dl, device)
-        m = metrics(preds, targets)
-        nz = targets > 0
-        print(f"=== {name} ===")
-        print(f"  n             = {len(preds)}  (target>0: {int(nz.sum())})")
-        print(f"  median |delta|    = {m['med_abs']:7.2f}    (counts)")
-        print(f"  median |delta|/y  = {m['rel_med']:.3f}    (rel err on nonzero)")
-        print(f"  mean   |delta|/y  = {m['rel_mean']:.3f}")
-        print(f"  AUC > 100     = {m['auc_100']:.3f}    (positives: {int((targets>100).sum())})")
-        print(f"  AUC > 1000    = {m['auc_1000']:.3f}    (positives: {int((targets>1000).sum())})")
+        P, C = predict(model, dl, device)
+        aucs = head_aucs(P, C, args.bce_thresh)
+        print(f"=== {name} (n={len(C)}) ===")
+        for t, a in zip(args.bce_thresh, aucs):
+            print(f"  AUC(count>{int(t)}) = {a:.3f}   (positives: {int((C>t).sum())})")
 
 
 if __name__ == '__main__':
