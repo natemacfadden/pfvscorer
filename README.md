@@ -1,35 +1,46 @@
 # pfvscorer
+
 *Nate MacFadden, Liam McAllister Group, Cornell*
 
-A transformer for predicting the number of solutions that certain classes of Diophantine problems each have.
+A neural **richness classifier** for the classes of Diophantine problems whose
+solutions are perturbatively flat vacua (PFVs) in string theory. The geometry of
+a conifold defines such a class (parameterized by `p in Z^h11`); given that
+geometry, the model predicts the probability that the class contains **more than
+a threshold number of solutions** (e.g. `>0` and `>50`), so that a downstream
+search ([pfvs](https://github.com/natemacfadden/pfvs)) can be allocated in
+proportion to how rich each geometry is likely to be.
 
-This is designed for string theory purposes, for which the solutions are **perturbatively flat vacua (PFVs)** and the classes of problems are those defined by different **conifolds**.
+## Why a scorer
 
-## Problem Statement
+[Certain string-theory problems](https://arxiv.org/abs/2406.13751) largely reduce
+to finding PFVs. The [pfvs](https://github.com/natemacfadden/pfvs) kernel
+enumerates solutions quickly, but the problem family is parameterized by
+`p in Z^h11`, so a naive search is unbounded. `pfvscorer` predicts, before any
+expensive enumeration, how many solutions a geometry is likely to yield --
+turning "search everything" into "search where solutions are likely, as deeply
+as they are likely to be there."
 
-See [pfvs](https://github.com/natemacfadden/pfvs).
+## Inputs and the symmetry of each
 
-## Description
+A conifold supplies several geometric objects plus scalar context. Each is
+encoded by a network that respects *that object's* symmetry, rather than
+flattening everything into a single sequence:
 
-A given conifold defines certain data:
-1) a scalar $h^{1,1}$,
-2) (triple intersection numbers) a tensor $\kappa\in\mathbb{Z}^{h^{1,1},h^{1,1},h^{1,1}}$,
-3) (second chern class) a vector $c_2 \in \mathbb{Z}^{h^{1,1}}$, and
-4) (hyperplane normals) a matrix $H \in \mathbb{Z}^{N,h^{1,1}-1}$.
+| input | object | encoder | symmetry respected |
+|---|---|---|---|
+| `kappa` | triple-intersection tensor `Z^(h11 x h11 x h11)` | Set Transformer over symmetric-COO tokens; within a token the three indices share an embedding and are summed | fully symmetric in its three indices (a Deep Sets aggregation within each token); tokens form an unordered set (permutation-invariant pooling) |
+| `c2` | second Chern class `Z^h11` | per-position embedding + small Transformer + masked mean-pool | positions are *ordered* (one per basis divisor) |
+| `H` | Mori-cone hyperplane normals `Z^(N x (h11-1))` | Deep Sets over rows, position-aware within each row | rows are an unordered *set*; columns are ordered |
+| `h11` | scalar | learned embedding | -- |
+| `h21, B, dilation` | scalar context | `signed_log1p` + small MLP | -- |
 
-This data defines a class (parameterized by a parameter $p\in\mathbb{Z}^{h^{1,1}}$) of Diophantine problems. (Note for the physicists: this data assumes a basis where the conifold curve is of the form $(1, 0, \dots, 0)$; a change-of-basis should be applied if necessary).
+The encodings feed a shared MLP trunk that emits one sigmoid logit per count
+threshold; `probs()` returns `P(#PFVs > threshold)` for each head.
 
-This model encodes the inputs $\kappa$, $c_2$, and $H$ via three separate encoder networks; $h^{1,1}$ enters through a learned embedding.. These encodings are then passed through a trunk decoder network that is trained (using Poisson NLL loss) to predict the log count of solutions.
+## Status
 
-| input    | encoder        | symmetry it respects                                         |
-|----------|----------------|-------------------------------------------------------------|
-| $\kappa$ | Set Transformer over symmetric-COO tokens | tokens are an unordered set; the index triple is symmetric  |
-| $c_2$    | small Transformer over `(position, value)` | positions are ordered (one per basis divisor)               |
-| $H$      | Deep Sets over rows | rows are an unordered set; columns are ordered              |
-
-### Intended use
-
-[Certain string theory problems](https://arxiv.org/abs/2406.13751) largely reduce to finding PFVs with certain properties. My kernel [pfvs](https://github.com/natemacfadden/pfvs) is able to quickly enumerate solutions, but the parameterization of the class of problems via $p\in\mathbb{Z}^{h^{1,1}}$ makes this problem naively unbounded. Before sampling $p$, the scorer model in this repo predicts how rich the geometry (conifold) is, guiding how many $p$ vectors to search and how deeply to search them (there are other parameters in the kernel).
+Research code. A trained model and a calibration experiment live under
+`experiments`.
 
 ## Installation
 
@@ -37,5 +48,9 @@ This model encodes the inputs $\kappa$, $c_2$, and $H$ via three separate encode
 pip install -e .
 ```
 
-Requires PyTorch. Optional extras: `pip install -e ".[test]"` (pytest),
-`pip install -e ".[experiments]"` (scikit-learn, for the calibration experiment).
+Requires PyTorch. Optional extras:
+
+```
+pip install -e ".[test]"          # pytest
+pip install -e ".[experiments]"   # scikit-learn, for the calibration experiment
+```
