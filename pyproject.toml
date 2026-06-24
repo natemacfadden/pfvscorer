@@ -28,7 +28,7 @@ requires-python = ">=3.9"
 
 [project.optional-dependencies]
 test = ["pytest"]
-experiments = ["scikit-learn"]
+experiments = ["scikit-learn", "matplotlib", "scipy"]
 
 [project.scripts]
 pfvscorer-train = "pfvscorer.train:main"

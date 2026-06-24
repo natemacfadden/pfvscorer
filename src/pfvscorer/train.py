@@ -101,7 +101,7 @@ def auc(scores: np.ndarray, y_true: np.ndarray) -> float:
     n_neg = len(y_true) - n_pos
     if n_pos == 0 or n_neg == 0:
         return float('nan')
-    # rank-sum (Mann-Whitney U) identity for AUC; threshold-free
+    # rank-sum identity for AUC; threshold-free (no tie correction)
     order = np.argsort(scores)
     ranks = np.empty_like(order, dtype=float)
     ranks[order] = np.arange(1, len(scores) + 1)

@@ -21,6 +21,8 @@ dist/
 *.parquet
 *.dat
 *.pt
+# but ship a small stratified sample so tests / quickstart run from a clone
+!data/sample_coni_pfvs.parquet
 
 # Archived source/intermediate files kept only for records
 data/archive/

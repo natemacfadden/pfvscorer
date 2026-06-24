@@ -54,3 +54,11 @@ Requires PyTorch. Optional extras:
 pip install -e ".[test]"          # pytest
 pip install -e ".[experiments]"   # scikit-learn, for the calibration experiment
 ```
+
+## Data
+
+The full dataset -- 18,253 conifolds (~17 MB) -- lives at `data/coni_pfvs.parquet`
+and is gitignored. A small stratified sample (`data/sample_coni_pfvs.parquet`, 50
+rows) ships with the repo, so the test suite and a quick pipeline run work from a
+fresh clone. The full dataset, which reproduces the metrics in `experiments/`, is
+available on request. See `data/data_description.md` for the schema.

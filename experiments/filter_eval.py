@@ -29,7 +29,7 @@ def build_sample(row, Bp, Dp):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--ckpt', default='checkpoints/coni_pfvs_logmse.pt')
+    ap.add_argument('--ckpt', default='checkpoints/coni_pfvs_bce2.pt')
     ap.add_argument('--label_thresh', type=float, default=0.0, help='positive = npfvs > this')
     ap.add_argument('--head', type=int, default=0, help='which head to score (multi-head models)')
     ap.add_argument('--seed', type=int, default=0)

@@ -3,7 +3,7 @@
 A trustable **pre-filter**: from a conifold's geometry, predict whether a search
 to a given `(B, dilation)` window will find PFVs -- to triage which conifolds are
 worth an expensive deep search. Not a count predictor. Data: `data/coni_pfvs.parquet`
-(one row per conifold; see `data/coni_pfvs.md`). All numbers below are measured on
+(one row per conifold; see `data/data_description.md`). All numbers below are measured on
 the held-out splits; nothing here is inferred.
 
 ## Split (coni-level, seed 0, 0.70 / 0.15 / 0.15)
@@ -40,8 +40,8 @@ of the rich (>50) ones (~39% of the flagged are truly >50).
 - `filter_eval.py` presence AUC + recall-vs-budget; `--head {0,1} --label_thresh {0,50}`
 
 ## Validations (recorded)
-- Not riding B: raw `frontier_B` alone is AUC 0.47 (chance) for `npfvs>0`; positives and
-  nulls have identical median `frontier_B` (13); the geometry carries the signal.
+- Not riding B: raw `frontier_infnorm` alone is AUC 0.47 (chance) for `npfvs>0`; positives and
+  nulls have identical median `frontier_infnorm` (13); the geometry carries the signal.
 - Negative probe: a genuine null (searched to B=170, npfvs=0) stays P(>0) <= 0.08 as B,dil
   are swept to (800, 400) -- big B does not flip it positive.
 - Positive probe: P(>0) is ~0 below a coni's onset (min infnorm) and rises as the true

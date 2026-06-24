@@ -12,6 +12,13 @@ from pfvscorer.dataset import (
     random_signed_perm,
 )
 
+SAMPLE_PARQUET = os.path.join(os.path.dirname(DEFAULT_PARQUET),
+                              "sample_coni_pfvs.parquet")
+# prefer the full dataset when present; fall back to the committed sample so
+# these tests run (not skip) from a fresh clone
+DATA_PARQUET = (DEFAULT_PARQUET if os.path.exists(DEFAULT_PARQUET)
+                else SAMPLE_PARQUET)
+
 
 def test_random_signed_perm_is_signed_permutation():
     rng = np.random.default_rng(0)
@@ -38,10 +45,10 @@ def test_identity_aug_is_noop():
     assert new_H == H
 
 
-@pytest.mark.skipif(not os.path.exists(DEFAULT_PARQUET),
-                    reason="parquet not present")
+@pytest.mark.skipif(not os.path.exists(DATA_PARQUET),
+                    reason="no parquet (full or sample) present")
 def test_collate_shapes_and_masks():
-    ds = ConiDataset(train=False)
+    ds = ConiDataset(parquet_path=DATA_PARQUET, train=False)
     batch = collate([ds[i] for i in range(8)])
 
     B = 8
@@ -57,14 +64,14 @@ def test_collate_shapes_and_masks():
         assert batch[key].shape == (B,)
 
 
-@pytest.mark.skipif(not os.path.exists(DEFAULT_PARQUET),
-                    reason="parquet not present")
+@pytest.mark.skipif(not os.path.exists(DATA_PARQUET),
+                    reason="no parquet (full or sample) present")
 def test_conditioned_count_matches_filter():
     """The conditioned count equals the exact (B', dil') filter, and the
     label-preserving signed-perm aug leaves (B, dil, count) unchanged."""
-    ds = ConiDataset(train=False)                 # deterministic sampling
-    ds_aug = ConiDataset(train=False, augment=True)
-    for i in (0, 1, 2, 100, 1000):
+    ds = ConiDataset(parquet_path=DATA_PARQUET, train=False)   # deterministic
+    ds_aug = ConiDataset(parquet_path=DATA_PARQUET, train=False, augment=True)
+    for i in [i for i in (0, 1, 2, 100, 1000) if i < len(ds)]:
         s = ds[i]
         r = ds.df.iloc[i]
         infn = np.asarray(r.pfv_infnorm); rdil = np.asarray(r.pfv_reqdil)
