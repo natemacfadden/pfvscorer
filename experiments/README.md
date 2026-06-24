@@ -21,6 +21,11 @@ Train:  `python -m pfvscorer.train --augment --bce_thresh 0 50 --ckpt_out checkp
 (`--augment` = signed-permutation GLSM-basis augmentation, which preserves the L-inf box
 and the ellipsoid form, so the (B,dil) labels stay exact.)
 
+Determinism: evaluation is deterministic (each eval sample is drawn with a fixed
+per-index seed), so `calibrate.py`/`filter_eval.py` reproduce exactly; training is
+intentionally *not* bit-reproducible -- `--augment` draws fresh randomness each epoch --
+so a retrained checkpoint's metrics vary slightly.
+
 Checkpoint: `checkpoints/coni_pfvs_bce2.pt`; isotonic calibrators (fit on val):
 `checkpoints/coni_pfvs_bce2_calib.pkl`.
 

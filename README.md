@@ -57,8 +57,20 @@ pip install -e ".[experiments]"   # scikit-learn, for the calibration experiment
 
 ## Data
 
-The full dataset -- 18,253 conifolds (~17 MB) -- lives at `data/coni_pfvs.parquet`
-and is gitignored. A small stratified sample (`data/sample_coni_pfvs.parquet`, 50
-rows) ships with the repo, so the test suite and a quick pipeline run work from a
-fresh clone. The full dataset, which reproduces the metrics in `experiments/`, is
-available on request. See `data/data_description.md` for the schema.
+The full dataset (18,253 conifolds, ~17 MB) and the trained checkpoint behind the
+`experiments/` metrics are hosted on Hugging Face:
+[natemacfadden/calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs).
+A small stratified sample (`data/sample_coni_pfvs.parquet`, 50 rows) ships with the
+repo, so the test suite and a quick pipeline run work from a fresh clone with no download.
+
+To reproduce the `experiments/` metrics, fetch the full data and checkpoint into the
+paths the scripts expect (`huggingface-cli` comes from `pip install huggingface_hub`):
+
+```bash
+huggingface-cli download natemacfadden/calabi-yau-coni-pfvs coni_pfvs.parquet \
+    --repo-type dataset --local-dir data
+huggingface-cli download natemacfadden/calabi-yau-coni-pfvs coni_pfvs_bce2.pt \
+    --repo-type dataset --local-dir checkpoints
+```
+
+See `data/data_description.md` for the schema.

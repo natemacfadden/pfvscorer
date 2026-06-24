@@ -30,7 +30,9 @@ import torch
 from torch.utils.data import Dataset
 
 # repo_root/data/coni_pfvs.parquet  (this file -> parents[2] = repo root)
-DEFAULT_PARQUET = str(Path(__file__).resolve().parents[2] / "data" / "coni_pfvs.parquet")
+DEFAULT_PARQUET = str(
+    Path(__file__).resolve().parents[2] / "data" / "coni_pfvs.parquet"
+)
 
 
 def random_signed_perm(n: int, rng: np.random.Generator) -> np.ndarray:
@@ -94,9 +96,9 @@ def apply_basis_aug(kappa_coo: list, c2: list, H: list, h11: int, V: np.ndarray)
         for perm in {(i, j, k), (i, k, j), (j, i, k), (j, k, i), (k, i, j), (k, j, i)}:
             dense[perm] = v
 
-    new_dense = np.einsum('ai,bj,ck,ijk->abc', U, U, U, dense)
-    new_c2    = U @ np.asarray(c2, dtype=np.int64)
-    new_H     = np.asarray(H, dtype=np.int64) @ V.T
+    new_dense = np.einsum("ai,bj,ck,ijk->abc", U, U, U, dense)
+    new_c2 = U @ np.asarray(c2, dtype=np.int64)
+    new_H = np.asarray(H, dtype=np.int64) @ V.T
 
     new_kappa = []
     for i in range(h11):
@@ -125,11 +127,14 @@ class ConiDataset(Dataset):
     deterministic per-index sampling (reproducible eval) and no basis aug.
     """
 
-    def __init__(self, parquet_path: str = DEFAULT_PARQUET,
-                 h11_filter: list[int] | None = None,
-                 augment: bool = False,
-                 train: bool = True,
-                 eval_seed: int = 12345):
+    def __init__(
+        self,
+        parquet_path: str = DEFAULT_PARQUET,
+        h11_filter: list[int] | None = None,
+        augment: bool = False,
+        train: bool = True,
+        eval_seed: int = 12345,
+    ):
         df = pq.read_table(parquet_path).to_pandas()
         if h11_filter is not None:
             df = df[df.h11.isin(h11_filter)].reset_index(drop=True)
@@ -150,32 +155,34 @@ class ConiDataset(Dataset):
 
         # sample a window (B', dil') jointly from one area-weighted frontier
         fr_B = np.maximum(np.asarray(r.frontier_infnorm, dtype=np.int64), 1)
-        fr_D = np.maximum(np.asarray(r.frontier_dil,     dtype=np.int64), 1)
+        fr_D = np.maximum(np.asarray(r.frontier_dil, dtype=np.int64), 1)
         areas = (fr_B * fr_D).astype(np.float64)
         fi = int(rng.choice(len(fr_B), p=areas / areas.sum()))
         Bp = int(rng.integers(1, int(fr_B[fi]) + 1))
         Dp = int(rng.integers(1, int(fr_D[fi]) + 1))
 
         infn = np.asarray(r.pfv_infnorm, dtype=np.int64)
-        rdil = np.asarray(r.pfv_reqdil,  dtype=np.int64)
+        rdil = np.asarray(r.pfv_reqdil, dtype=np.int64)
         count = int(np.count_nonzero((infn <= Bp) & (rdil <= Dp))) if infn.size else 0
 
         # features (+ optional signed-perm basis augmentation)
         kappa_coo = [list(x) for x in r.kappa_coo]
-        c2_list   = list(r.c2)
-        H_list    = [list(x) for x in r.H]
+        c2_list = list(r.c2)
+        H_list = [list(x) for x in r.H]
         if self.augment:
             h11 = int(r.h11)
             V = random_signed_perm(h11 - 1, rng)
-            kappa_coo, c2_list, H_list = apply_basis_aug(kappa_coo, c2_list, H_list, h11, V)
+            kappa_coo, c2_list, H_list = apply_basis_aug(
+                kappa_coo, c2_list, H_list, h11, V
+            )
 
         if len(kappa_coo) == 0:
             kappa_idx = torch.zeros((0, 3), dtype=torch.long)
-            kappa_v   = torch.zeros((0,),   dtype=torch.float32)
+            kappa_v = torch.zeros((0,), dtype=torch.float32)
         else:
             arr = torch.tensor(kappa_coo, dtype=torch.long)
             kappa_idx = arr[:, :3].contiguous()
-            kappa_v   = arr[:, 3].to(torch.float32)
+            kappa_v = arr[:, 3].to(torch.float32)
 
         if len(H_list) > 0:
             H_tensor = torch.tensor(H_list, dtype=torch.long)
@@ -183,15 +190,15 @@ class ConiDataset(Dataset):
             H_tensor = torch.zeros((0, 0), dtype=torch.long)
 
         return {
-            'kappa_idx': kappa_idx,
-            'kappa_v':   kappa_v,
-            'c2':        torch.tensor(c2_list, dtype=torch.long),
-            'H':         H_tensor,
-            'h11':       torch.tensor(int(r.h11), dtype=torch.long),
-            'h21':       torch.tensor(float(r.h21), dtype=torch.float32),
-            'B':         torch.tensor(float(Bp), dtype=torch.float32),
-            'dil':       torch.tensor(float(Dp), dtype=torch.float32),
-            'count':     torch.tensor(count, dtype=torch.long),
+            "kappa_idx": kappa_idx,
+            "kappa_v": kappa_v,
+            "c2": torch.tensor(c2_list, dtype=torch.long),
+            "H": H_tensor,
+            "h11": torch.tensor(int(r.h11), dtype=torch.long),
+            "h21": torch.tensor(float(r.h21), dtype=torch.float32),
+            "B": torch.tensor(float(Bp), dtype=torch.float32),
+            "dil": torch.tensor(float(Dp), dtype=torch.float32),
+            "count": torch.tensor(count, dtype=torch.long),
         }
 
 
@@ -210,13 +217,13 @@ def collate(batch: list[dict]) -> dict:
         (True = valid), and h11/h21/B/dil/count.
     """
     bs = len(batch)
-    max_h11 = int(max(b['h11'].item() for b in batch))
-    max_kappa = max(b['kappa_idx'].shape[0] for b in batch)
-    max_h_rows = max(b['H'].shape[0] for b in batch)
+    max_h11 = int(max(b["h11"].item() for b in batch))
+    max_kappa = max(b["kappa_idx"].shape[0] for b in batch)
+    max_h_rows = max(b["H"].shape[0] for b in batch)
 
     kappa_idx = torch.zeros((bs, max_kappa, 3), dtype=torch.long)
-    kappa_v   = torch.zeros((bs, max_kappa),   dtype=torch.float32)
-    kappa_mask = torch.zeros((bs, max_kappa),  dtype=torch.bool)
+    kappa_v = torch.zeros((bs, max_kappa), dtype=torch.float32)
+    kappa_mask = torch.zeros((bs, max_kappa), dtype=torch.bool)
 
     c2 = torch.zeros((bs, max_h11), dtype=torch.long)
     c2_mask = torch.zeros((bs, max_h11), dtype=torch.bool)
@@ -226,48 +233,48 @@ def collate(batch: list[dict]) -> dict:
     H_row_mask = torch.zeros((bs, max_h_rows), dtype=torch.bool)
     H_col_mask = torch.zeros((bs, h_cols), dtype=torch.bool)
 
-    h11_t  = torch.zeros((bs,), dtype=torch.long)
-    h21_t  = torch.zeros((bs,), dtype=torch.float32)
-    B_t    = torch.zeros((bs,), dtype=torch.float32)
-    dil_t  = torch.zeros((bs,), dtype=torch.float32)
-    cnt_t  = torch.zeros((bs,), dtype=torch.long)
+    h11_t = torch.zeros((bs,), dtype=torch.long)
+    h21_t = torch.zeros((bs,), dtype=torch.float32)
+    B_t = torch.zeros((bs,), dtype=torch.float32)
+    dil_t = torch.zeros((bs,), dtype=torch.float32)
+    cnt_t = torch.zeros((bs,), dtype=torch.long)
 
     for b, s in enumerate(batch):
-        n = s['kappa_idx'].shape[0]
+        n = s["kappa_idx"].shape[0]
         if n > 0:
-            kappa_idx[b, :n] = s['kappa_idx']
-            kappa_v[b, :n]   = s['kappa_v']
+            kappa_idx[b, :n] = s["kappa_idx"]
+            kappa_v[b, :n] = s["kappa_v"]
             kappa_mask[b, :n] = True
 
-        h = int(s['h11'].item())
-        c2[b, :h] = s['c2']
+        h = int(s["h11"].item())
+        c2[b, :h] = s["c2"]
         c2_mask[b, :h] = True
 
-        Hs = s['H']
+        Hs = s["H"]
         if Hs.numel() > 0:
             r_, c_ = Hs.shape
             H[b, :r_, :c_] = Hs
             H_row_mask[b, :r_] = True
             H_col_mask[b, :c_] = True
 
-        h11_t[b] = s['h11']
-        h21_t[b] = s['h21']
-        B_t[b]   = s['B']
-        dil_t[b] = s['dil']
-        cnt_t[b] = s['count']
+        h11_t[b] = s["h11"]
+        h21_t[b] = s["h21"]
+        B_t[b] = s["B"]
+        dil_t[b] = s["dil"]
+        cnt_t[b] = s["count"]
 
     return {
-        'kappa_idx':  kappa_idx,
-        'kappa_v':    kappa_v,
-        'kappa_mask': kappa_mask,
-        'c2':         c2,
-        'c2_mask':    c2_mask,
-        'H':          H,
-        'H_row_mask': H_row_mask,
-        'H_col_mask': H_col_mask,
-        'h11':        h11_t,
-        'h21':        h21_t,
-        'B':          B_t,
-        'dil':        dil_t,
-        'count':      cnt_t,
+        "kappa_idx": kappa_idx,
+        "kappa_v": kappa_v,
+        "kappa_mask": kappa_mask,
+        "c2": c2,
+        "c2_mask": c2_mask,
+        "H": H,
+        "H_row_mask": H_row_mask,
+        "H_col_mask": H_col_mask,
+        "h11": h11_t,
+        "h21": h21_t,
+        "B": B_t,
+        "dil": dil_t,
+        "count": cnt_t,
     }

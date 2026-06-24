@@ -39,22 +39,36 @@ class SetTransformerPool(nn.Module):
     to give n_seeds fixed summary vectors, invariant to set order and size.
     Input (B, N, D) + padding mask -> output (B, n_seeds * D).
     """
-    def __init__(self, d_model: int, n_heads: int = 4, n_sab: int = 2,
-                 n_seeds: int = 1, ff_mult: int = 2, dropout: float = 0.0):
+
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int = 4,
+        n_sab: int = 2,
+        n_seeds: int = 1,
+        ff_mult: int = 2,
+        dropout: float = 0.0,
+    ):
         super().__init__()
         layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=n_heads,
+            d_model=d_model,
+            nhead=n_heads,
             dim_feedforward=ff_mult * d_model,
-            dropout=dropout, activation='gelu',
-            batch_first=True, norm_first=True,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
         )
-        self.sab = nn.TransformerEncoder(layer, num_layers=n_sab, enable_nested_tensor=False)
+        self.sab = nn.TransformerEncoder(
+            layer, num_layers=n_sab, enable_nested_tensor=False
+        )
 
         self.n_seeds = n_seeds
         self.seeds = nn.Parameter(torch.randn(n_seeds, d_model) * 0.02)
         self.pma_norm_q = nn.LayerNorm(d_model)
         self.pma_attn = nn.MultiheadAttention(
-            d_model, n_heads, dropout=dropout, batch_first=True)
+            d_model, n_heads, dropout=dropout, batch_first=True
+        )
         self.pma_norm_o = nn.LayerNorm(d_model)
         self.pma_ff = nn.Sequential(
             nn.Linear(d_model, ff_mult * d_model),
@@ -62,7 +76,9 @@ class SetTransformerPool(nn.Module):
             nn.Linear(ff_mult * d_model, d_model),
         )
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         """
         x   : (B, N, D)
         mask: (B, N) bool, True for valid tokens
@@ -74,13 +90,12 @@ class SetTransformerPool(nn.Module):
 
         # PMA: learned queries attend over the set
         B = x.shape[0]
-        Q = self.seeds.unsqueeze(0).expand(B, -1, -1)             # (B, S, D)
+        Q = self.seeds.unsqueeze(0).expand(B, -1, -1)  # (B, S, D)
         Qn = self.pma_norm_q(Q)
-        pooled, _ = self.pma_attn(Qn, x, x, key_padding_mask=kp,
-                                  need_weights=False)
+        pooled, _ = self.pma_attn(Qn, x, x, key_padding_mask=kp, need_weights=False)
         pooled = Q + pooled
-        pooled = pooled + self.pma_ff(self.pma_norm_o(pooled))    # (B, S, D)
-        return pooled.flatten(1)                                  # (B, S*D)
+        pooled = pooled + self.pma_ff(self.pma_norm_o(pooled))  # (B, S, D)
+        return pooled.flatten(1)  # (B, S*D)
 
 
 class KappaEncoder(nn.Module):
@@ -120,7 +135,10 @@ class KappaEncoder(nn.Module):
 
         # set transformer pooling
         self.pool = SetTransformerPool(
-            d_model=d_model, n_heads=n_heads, n_sab=n_sab, n_seeds=n_seeds,
+            d_model=d_model,
+            n_heads=n_heads,
+            n_sab=n_sab,
+            n_seeds=n_seeds,
         )
 
         # output projection
@@ -130,8 +148,9 @@ class KappaEncoder(nn.Module):
             nn.Linear(d_model, d_out),
         )
 
-    def forward(self, kappa_idx: torch.Tensor, kappa_v: torch.Tensor,
-                kappa_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, kappa_idx: torch.Tensor, kappa_v: torch.Tensor, kappa_mask: torch.Tensor
+    ) -> torch.Tensor:
         """
         kappa_idx: (B, N, 3) long
         kappa_v  : (B, N)    float
@@ -146,12 +165,12 @@ class KappaEncoder(nn.Module):
         val_emb = self.val_proj(v)
 
         # per-token feature
-        tok = torch.cat([idx_emb, val_emb], dim=-1)              # (B, N, d_in)
-        tok = self.in_proj(tok)                                   # (B, N, d_model)
+        tok = torch.cat([idx_emb, val_emb], dim=-1)  # (B, N, d_in)
+        tok = self.in_proj(tok)  # (B, N, d_model)
 
         # set transformer pooling (with padding mask)
-        pooled = self.pool(tok, mask=kappa_mask)                  # (B, S*d_model)
-        return self.out(pooled)                                   # (B, d_out)
+        pooled = self.pool(tok, mask=kappa_mask)  # (B, S*d_model)
+        return self.out(pooled)  # (B, d_out)
 
 
 class C2Encoder(nn.Module):
@@ -162,6 +181,7 @@ class C2Encoder(nn.Module):
     E_pos[j] + Linear(signed_log1p(c2[j])). Aggregator: a small transformer
     encoder over the tokens, then mean-pool over valid positions.
     """
+
     def __init__(
         self,
         max_h11: int,
@@ -178,10 +198,16 @@ class C2Encoder(nn.Module):
         self.in_proj = nn.Linear(d_pos + d_val, d_model)
 
         layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=n_heads, dim_feedforward=2*d_model,
-            activation='gelu', batch_first=True, norm_first=True,
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=2 * d_model,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
         )
-        self.enc = nn.TransformerEncoder(layer, num_layers=n_layers, enable_nested_tensor=False)
+        self.enc = nn.TransformerEncoder(
+            layer, num_layers=n_layers, enable_nested_tensor=False
+        )
         self.out = nn.Linear(d_model, d_out)
 
     def forward(self, c2: torch.Tensor, c2_mask: torch.Tensor) -> torch.Tensor:
@@ -192,18 +218,18 @@ class C2Encoder(nn.Module):
         """
         B, H = c2.shape
         pos = torch.arange(H, device=c2.device).unsqueeze(0).expand(B, H)
-        p = self.pos_emb(pos)                                       # (B, H, d_pos)
-        v = signed_log1p(c2.float()).unsqueeze(-1)                  # (B, H, 1)
-        v = self.val_proj(v)                                        # (B, H, d_val)
-        tok = self.in_proj(torch.cat([p, v], dim=-1))               # (B, H, d_model)
+        p = self.pos_emb(pos)  # (B, H, d_pos)
+        v = signed_log1p(c2.float()).unsqueeze(-1)  # (B, H, 1)
+        v = self.val_proj(v)  # (B, H, d_val)
+        tok = self.in_proj(torch.cat([p, v], dim=-1))  # (B, H, d_model)
 
         # transformer expects src_key_padding_mask: True = pad (i.e., ignore)
         pad = ~c2_mask
-        z = self.enc(tok, src_key_padding_mask=pad)                 # (B, H, d_model)
+        z = self.enc(tok, src_key_padding_mask=pad)  # (B, H, d_model)
 
         m = c2_mask.unsqueeze(-1).to(z.dtype)
         pooled = (z * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
-        return self.out(pooled)                                     # (B, d_out)
+        return self.out(pooled)  # (B, d_out)
 
 
 class HEncoder(nn.Module):
@@ -215,6 +241,7 @@ class HEncoder(nn.Module):
     signed-log1p value, summed over columns (handles variable h11-1).
     Set aggregator across rows: Deep Sets (sum-pool, 1/sqrt(count) rescaled).
     """
+
     def __init__(
         self,
         max_h11: int,
@@ -248,8 +275,9 @@ class HEncoder(nn.Module):
             nn.Linear(d_model, d_out),
         )
 
-    def forward(self, H: torch.Tensor, H_row_mask: torch.Tensor,
-                H_col_mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, H: torch.Tensor, H_row_mask: torch.Tensor, H_col_mask: torch.Tensor
+    ) -> torch.Tensor:
         """
         H:          (B, M, C) long  - C = max_h11 - 1
         H_row_mask: (B, M)    bool  - which rows are valid
@@ -259,25 +287,25 @@ class HEncoder(nn.Module):
         B, M, C = H.shape
 
         col_ids = torch.arange(C, device=H.device).view(1, 1, C).expand(B, M, C)
-        col_e = self.col_emb(col_ids)                                # (B, M, C, d_col)
-        v = signed_log1p(H.float()).unsqueeze(-1)                    # (B, M, C, 1)
-        v = self.val_proj(v)                                         # (B, M, C, d_val)
+        col_e = self.col_emb(col_ids)  # (B, M, C, d_col)
+        v = signed_log1p(H.float()).unsqueeze(-1)  # (B, M, C, 1)
+        v = self.val_proj(v)  # (B, M, C, d_val)
 
-        per_col = self.row_phi(torch.cat([col_e, v], dim=-1))        # (B, M, C, d_model)
+        per_col = self.row_phi(torch.cat([col_e, v], dim=-1))  # (B, M, C, d_model)
 
         # sum over columns (only valid ones)
         col_mask = (H_row_mask.unsqueeze(-1) & H_col_mask.unsqueeze(1)).unsqueeze(-1)
         col_mask = col_mask.to(per_col.dtype)
-        row_feat = (per_col * col_mask).sum(dim=2)                   # (B, M, d_model)
-        n_cols = col_mask.sum(dim=2).clamp(min=1.0)                  # (B, M, 1)
+        row_feat = (per_col * col_mask).sum(dim=2)  # (B, M, d_model)
+        n_cols = col_mask.sum(dim=2).clamp(min=1.0)  # (B, M, 1)
         row_feat = row_feat / n_cols.sqrt()
 
-        row_feat = self.set_phi(row_feat)                            # (B, M, d_model)
+        row_feat = self.set_phi(row_feat)  # (B, M, d_model)
 
         # sum-pool valid rows
         rmask = H_row_mask.unsqueeze(-1).to(row_feat.dtype)
-        pooled = (row_feat * rmask).sum(dim=1)                       # (B, d_model)
+        pooled = (row_feat * rmask).sum(dim=1)  # (B, d_model)
         n_rows = rmask.sum(dim=1).clamp(min=1.0)
         pooled = pooled / n_rows.sqrt()
 
-        return self.rho(pooled)                                      # (B, d_out)
+        return self.rho(pooled)  # (B, d_out)
