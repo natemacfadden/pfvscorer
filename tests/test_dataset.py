@@ -4,7 +4,6 @@ import os
 
 import numpy as np
 import pytest
-import torch
 
 from pfvscorer import ConiDataset, collate
 from pfvscorer.dataset import (

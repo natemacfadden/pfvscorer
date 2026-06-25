@@ -136,7 +136,7 @@ def main():
         print(
             f"  raw P range [{raw_t.min():.2f},{raw_t.max():.2f}]  cal P range [{cal_t.min():.2f},{cal_t.max():.2f}]"
         )
-        print(f"  operating points (calibrated, test):")
+        print("  operating points (calibrated, test):")
         for tau in (0.25, 0.3, 0.5, 0.7, 0.9):
             fl = cal_t > tau
             if fl.sum():

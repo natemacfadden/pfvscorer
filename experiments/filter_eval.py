@@ -1,6 +1,7 @@
-"""Evaluate a count model as an 'any PFVs' pre-filter: score = predicted count
-at the (deepest) frontier, label = (npfvs > 0). Reports ROC-AUC overall and per
-h11, plus a recall-vs-budget table (study the top X%, catch Y% of positives)."""
+"""Evaluate the richness classifier as an 'any PFVs' pre-filter: score = the
+model's predicted probability at the (deepest) frontier, label = (npfvs > 0).
+Reports ROC-AUC overall and per h11, plus a recall-vs-budget table (study the
+top X%, catch Y% of positives)."""
 
 from __future__ import annotations
 import argparse
