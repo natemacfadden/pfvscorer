@@ -53,7 +53,7 @@ def main():
     )
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
-    ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=False)
+    ckpt = torch.load(args.ckpt, map_location="cpu", weights_only=True)
     a = ckpt["args"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     parquet = (

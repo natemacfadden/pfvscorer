@@ -95,7 +95,7 @@ def binstats(p, y, bins=BINS):
 
 
 def main():
-    ckpt = torch.load(CKPT, map_location="cpu", weights_only=False)
+    ckpt = torch.load(CKPT, map_location="cpu", weights_only=True)
     a = ckpt["args"]
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # ckpt records the absolute parquet path from training; fall back to the local
