@@ -35,7 +35,29 @@ flattening everything into a single sequence:
 | `h21, B, dilation` | scalar context | `signed_log1p` + small MLP | -- |
 
 The encodings feed a shared MLP trunk that emits one sigmoid logit per count
-threshold; `probs()` returns `P(#PFVs > threshold)` for each head.
+threshold; `probs()` returns the raw sigmoid `P(#PFVs > threshold)` for each head
+(uncalibrated -- see Calibration).
+
+## Calibration
+
+The network discriminates well (AUC), but its raw sigmoids are not calibrated: on
+the two-head coni filter the raw heads sit around a 10-bin ECE of ~0.15, so a score
+of 0.7 does not mean a 70% empirical hit rate.
+
+`experiments/calibrate.py` corrects this per head with **isotonic regression** --
+the best non-decreasing map from raw score to empirical frequency (fit by pool-
+adjacent-violators). It is fit on the validation split and reported on the held-out
+test split (the split is stored in the checkpoint, so there is no leakage), with
+Brier and ECE before vs after, a reliability diagram, and precision/recall at
+several operating points. Because the map is monotonic it changes only the
+probability values, not the ranking -- AUC is unchanged. The fitted per-head
+calibrators are saved to `checkpoints/coni_pfvs_bce2_calib.pkl`.
+
+Current gap: those calibrators are fit and validated but not yet applied by the
+package. `probs()` still returns the uncalibrated sigmoid; producing calibrated
+numbers means loading the pickle and applying the per-head map by hand. The planned
+fix is a small inference entry point that loads a checkpoint and applies its
+calibrators, so `probs()` can return calibrated probabilities directly.
 
 ## Status
 
