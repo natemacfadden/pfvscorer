@@ -96,3 +96,7 @@ huggingface-cli download natemacfadden/calabi-yau-coni-pfvs coni_pfvs_bce2.pt \
 ```
 
 See `data/data_description.md` for the schema.
+
+## License
+
+[GPLv3](LICENSE). Copyright (c) 2026 Nate MacFadden.
